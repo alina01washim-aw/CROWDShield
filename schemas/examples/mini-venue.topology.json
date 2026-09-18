@@ -1,0 +1,272 @@
+{
+  "schema_version": "1.0.0",
+  "document_kind": "topology",
+  "venue": {
+    "venue_id": "mini-ground-demo",
+    "name": "Mini Festival Ground (Reference Sample)",
+    "venue_type": "festival_ground",
+    "timezone": "Asia/Kolkata",
+    "description": "Minimal three-zone reference venue: one entrance gate feeding a central gathering ground, discharging through one exit corridor. Built as the smallest topology that still exercises every part of the schema. The capacity figures are deliberately under-provisioned on the outflow side so that the Bottleneck Physics Engine has a real bottleneck to find: inflow capacity is 238 persons/min while outflow capacity is 158 persons/min, restricted further to ~95/min by the exit barricade's current setting. All thresholds are uncalibrated engineering estimates."
+  },
+  "topology_version": {
+    "version": "1.0.0",
+    "authored_at": "2026-08-19T09:00:00Z",
+    "authored_by": "reference-sample",
+    "content_hash": "sha256:fa304186dd1d312378ad19793982bfe04fa1c2ffd75a3a80eddedcdb10286ba3",
+    "change_note": "Initial reference topology accompanying SPEC-v1 requirement N-3."
+  },
+  "spatial_reference": {
+    "mode": "local_cartesian",
+    "epsg": 4326,
+    "linear_units": "meters",
+    "geographic_anchor": {
+      "latitude": 19.9975,
+      "longitude": 73.7898,
+      "rotation_degrees": 0
+    }
+  },
+  "zones": [
+    {
+      "zone_id": "gate-north",
+      "name": "North Entrance Gate",
+      "type": "entrance",
+      "area_sqm": 300,
+      "base_capacity_persons": 450,
+      "critical_threshold_persons": 900,
+      "is_egress_terminal": false,
+      "monitored": true,
+      "level": 0,
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [10, 30],
+            [30, 30],
+            [30, 45],
+            [10, 45],
+            [10, 30]
+          ]
+        ]
+      },
+      "centroid": [20, 37.5],
+      "density_bands": {
+        "comfortable_max_persons_per_sqm": 1.5,
+        "constrained_max_persons_per_sqm": 2.5,
+        "dense_max_persons_per_sqm": 3.0,
+        "critical_min_persons_per_sqm": 3.0,
+        "calibration_status": "uncalibrated_default",
+        "basis_note": "Engineering estimate. Entrance queueing areas are held to lower density bands than open ground because arriving crowds are directional and cannot easily reverse."
+      },
+      "risk_profile": {
+        "criticality_weight": 1.2,
+        "enclosure": "partially_enclosed",
+        "has_stairs": false,
+        "surface": "paved",
+        "single_egress": false,
+        "historical_incident_count": 0,
+        "known_choke_point": true,
+        "notes": "Arrival surges are externally driven (transport arrivals), so inflow here is only partially controllable."
+      },
+      "outgoing_edges": [
+        "e-gate-to-ground"
+      ],
+      "incoming_edges": []
+    },
+    {
+      "zone_id": "main-ground",
+      "name": "Main Gathering Ground",
+      "type": "gathering",
+      "area_sqm": 1200,
+      "base_capacity_persons": 2400,
+      "critical_threshold_persons": 5400,
+      "is_egress_terminal": false,
+      "monitored": true,
+      "level": 0,
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0, 0],
+            [40, 0],
+            [40, 30],
+            [0, 30],
+            [0, 0]
+          ]
+        ]
+      },
+      "centroid": [20, 15],
+      "density_bands": {
+        "comfortable_max_persons_per_sqm": 2.0,
+        "constrained_max_persons_per_sqm": 3.0,
+        "dense_max_persons_per_sqm": 4.0,
+        "critical_min_persons_per_sqm": 4.5,
+        "calibration_status": "uncalibrated_default",
+        "basis_note": "Engineering estimate only. Standing-crowd density bands require venue calibration and review by a crowd-safety practitioner before any operational reliance."
+      },
+      "risk_profile": {
+        "criticality_weight": 1.0,
+        "enclosure": "open",
+        "has_stairs": false,
+        "gradient_percent": 0,
+        "surface": "unpaved",
+        "single_egress": true,
+        "historical_incident_count": 0,
+        "known_choke_point": false,
+        "notes": "single_egress is true: this zone has exactly one outward connection, so any restriction on e-ground-to-exit removes all egress capacity. A hazard-override candidate."
+      },
+      "incoming_edges": [
+        "e-gate-to-ground"
+      ],
+      "outgoing_edges": [
+        "e-ground-to-exit"
+      ]
+    },
+    {
+      "zone_id": "exit-corridor-east",
+      "name": "East Exit Corridor",
+      "type": "corridor",
+      "area_sqm": 200,
+      "base_capacity_persons": 300,
+      "critical_threshold_persons": 700,
+      "is_egress_terminal": true,
+      "terminal_discharge_capacity_per_minute": 300,
+      "monitored": true,
+      "level": 0,
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [40, 13],
+            [90, 13],
+            [90, 17],
+            [40, 17],
+            [40, 13]
+          ]
+        ]
+      },
+      "centroid": [65, 15],
+      "density_bands": {
+        "comfortable_max_persons_per_sqm": 1.5,
+        "constrained_max_persons_per_sqm": 2.5,
+        "dense_max_persons_per_sqm": 3.0,
+        "critical_min_persons_per_sqm": 3.5,
+        "calibration_status": "uncalibrated_default",
+        "basis_note": "Engineering estimate. Moving corridors tolerate lower standing density than open ground before flow breaks down."
+      },
+      "risk_profile": {
+        "criticality_weight": 1.3,
+        "enclosure": "partially_enclosed",
+        "has_stairs": false,
+        "surface": "paved",
+        "single_egress": false,
+        "known_choke_point": true,
+        "notes": "Modelled as the egress terminal: the graph terminates at the venue boundary. terminal_discharge_capacity_per_minute represents the street mouth beyond, which is finite - treating an exit as an infinite sink is a standard egress-modelling error."
+      },
+      "incoming_edges": [
+        "e-ground-to-exit"
+      ],
+      "outgoing_edges": []
+    }
+  ],
+  "edges": [
+    {
+      "edge_id": "e-gate-to-ground",
+      "name": "North Gate Throat",
+      "source_zone": "gate-north",
+      "target_zone": "main-ground",
+      "type": "gateway",
+      "width_meters": 4.2,
+      "min_width_meters": 3.6,
+      "length_meters": 8,
+      "flow_capacity_per_minute": 238,
+      "flow_capacity_basis": {
+        "method": "derived_from_width",
+        "reference": "min_width_meters 3.6 m x 66 persons/min/m, a conservative free-flow specific-flow figure from pedestrian planning practice. Not venue-measured.",
+        "calibration_status": "uncalibrated_default"
+      },
+      "traversal": "bidirectional",
+      "counterflow_permitted": true,
+      "is_monitored_flow": true,
+      "dynamic_state": {
+        "mode": "open",
+        "capacity_derate_factor": 1
+      }
+    },
+    {
+      "edge_id": "e-ground-to-exit",
+      "name": "East Exit Portal",
+      "source_zone": "main-ground",
+      "target_zone": "exit-corridor-east",
+      "type": "doorway",
+      "width_meters": 3.0,
+      "min_width_meters": 2.4,
+      "length_meters": 6,
+      "flow_capacity_per_minute": 158,
+      "flow_capacity_basis": {
+        "method": "derived_from_width",
+        "reference": "min_width_meters 2.4 m x 66 persons/min/m. The governing constriction is the portal, not the 4 m corridor beyond it.",
+        "calibration_status": "uncalibrated_default"
+      },
+      "traversal": "forward_only",
+      "counterflow_permitted": false,
+      "is_monitored_flow": true,
+      "dynamic_state": {
+        "mode": "restricted",
+        "capacity_derate_factor": 0.6,
+        "reason": "Configured default: barricade set to meter outflow onto the public street at event start."
+      },
+      "controlled_by": [
+        "cp-barricade-exit-east"
+      ]
+    }
+  ],
+  "control_points": [
+    {
+      "control_point_id": "cp-gate-north",
+      "type": "gate",
+      "name": "North Gate",
+      "governs_edges": [
+        "e-gate-to-ground"
+      ],
+      "default_mode": "open",
+      "supported_modes": [
+        "open",
+        "closed",
+        "restricted"
+      ],
+      "actuation": "manual_staffed",
+      "actuation_lead_time_seconds": 90,
+      "staff_required_count": 4,
+      "reversible": true,
+      "authority_required": "operator",
+      "location": [20, 30],
+      "level": 0,
+      "notes": "Closing this halts all inflow. Safe to close at any occupancy: it reduces inflow without touching egress capacity."
+    },
+    {
+      "control_point_id": "cp-barricade-exit-east",
+      "type": "movable_barrier",
+      "name": "East Exit Barricade",
+      "governs_edges": [
+        "e-ground-to-exit"
+      ],
+      "default_mode": "restricted",
+      "supported_modes": [
+        "open",
+        "restricted",
+        "closed"
+      ],
+      "actuation": "manual_staffed",
+      "actuation_lead_time_seconds": 240,
+      "staff_required_count": 2,
+      "reversible": true,
+      "authority_required": "incident_commander",
+      "location": [40, 15],
+      "level": 0,
+      "notes": "Governs the ONLY egress from main-ground. Setting this to `closed` while main-ground is occupied must be rejected by the safety invariant in SPEC FR-064: it would reduce total egress capacity to zero. Moving it to `open` restores full portal capacity (158/min from ~95/min) and is the primary intervention this venue affords."
+    }
+  ],
+  "extensions": {
+    "sample_note": "Reference instance for CROWDShield SPEC-v1 requirement N-3. Numbers are illustrative and uncalibrated. Validate with schemas/venue-graph.schema.json plus the cross-reference integrity pass described in that schema's top-level description."
+  }
+}

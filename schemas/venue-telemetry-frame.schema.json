@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crowdshield.example/schemas/venue-telemetry-frame.schema.json",
+  "title": "CROWDShield Venue Telemetry Frame",
+  "description": "TIER 3 of the CROWDShield state model: high-frequency observations over an existing venue topology. Companion to venue-graph.schema.json.\n\nWHY THIS IS A SEPARATE DOCUMENT. A venue topology carries polygon geometry, capacities and configuration - kilobytes to megabytes, and constant for the whole event. Telemetry changes several times per second. Embedding one in the other would mean re-serialising, re-transmitting and re-parsing immutable geometry on every tick, which is the dominant avoidable cost in a system like this. Separating them means the per-tick payload is a few hundred bytes of numbers per zone, which is also precisely what makes SPEC §7's bandwidth and cost claims true and what lets the pipeline survive a poor network (FR-140).\n\nCONTENTS ARE MEASUREMENTS, NOT CONCLUSIONS. A frame carries what a sensing source can compute on its own. It deliberately excludes:\n  - quantities requiring a topology join (occupancy ratio, edge utilisation) - the consumer computes these,\n  - detections (bottleneck, blockage, counterflow, surge) - outputs of the Detection layer,\n  - risk score, severity, Time-To-Critical, recommendations - outputs of the Risk and Recommendation engines.\nHolding that line keeps the venue model from becoming a god-object and keeps the deterministic risk core auditable (SPEC §13).\n\nORDERING AND REPLAY. `sequence` is strictly increasing per (venue_id, event_id). Gaps signal loss; duplicates are idempotent and MUST be discarded by frame_id (SPEC FR-142, FR-143).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "frame_id",
+    "venue_id",
+    "topology_binding",
+    "observed_at",
+    "sequence",
+    "frame_type"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "frame_id": {
+      "description": "Globally unique, stable identifier for this frame. The idempotency key: a frame replayed from an offline buffer after reconnection carries the same frame_id and MUST be deduplicated, not double-counted (SPEC FR-142).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "venue_id": { "$ref": "#/$defs/identifier" },
+    "event_id": { "$ref": "#/$defs/identifier" },
+    "topology_binding": {
+      "description": "Binds this frame to the EXACT topology revision it was computed against. Without this, an administrator editing a capacity mid-event would silently invalidate cached adjacency and capacity indices and make risk scores from before and after the edit incomparable, with no way to detect it. A consumer whose loaded topology hash differs MUST refuse the frame or reload the topology.",
+      "type": "object",
+      "required": ["topology_version", "content_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "topology_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "content_hash": { "type": "string", "pattern": "^(sha256|sha512):[0-9a-f]{32,128}$" }
+      }
+    },
+    "observed_at": {
+      "description": "Instant the observations describe. Distinct from emitted_at: an edge node that buffered through an outage emits late but still describes the earlier instant, and conflating the two would silently backdate or postdate the whole timeline (SPEC FR-143, FR-147).",
+      "$ref": "#/$defs/timestamp"
+    },
+    "emitted_at": { "$ref": "#/$defs/timestamp" },
+    "received_at": { "$ref": "#/$defs/timestamp" },
+    "sequence": {
+      "description": "Strictly increasing per (venue_id, event_id). Enables gap detection and correct ordering of out-of-order arrivals after reconnection.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "frame_type": {
+      "description": "`full` - state for every monitored entity; safe to use as a cold-start baseline.\n`delta` - only entities whose state changed since the previous sequence; smaller, but requires an established baseline. A consumer joining mid-stream MUST wait for a `full` frame.",
+      "enum": ["full", "delta"]
+    },
+    "evaluation_interval_ms": {
+      "description": "Nominal interval this frame represents. Lets a consumer distinguish a genuinely slower cadence from dropped frames.",
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "system_mode": {
+      "description": "Operating mode of the emitting pipeline. `degraded` = reduced source coverage; `local_only` = control-room-local operation with the cloud unreachable. Surfaced to operators as the degraded-mode banner (SPEC FR-144) and used to lower confidence automatically (FR-145).",
+      "enum": ["nominal", "degraded", "local_only"],
+      "default": "nominal"
+    },
+    "coverage": {
+      "description": "Self-assessment of input completeness for this frame. The honest basis for system-wide confidence: a frame covering three of twelve monitored zones must not present as authoritative.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "monitored_zone_count": { "type": "integer", "minimum": 0 },
+        "reporting_zone_count": { "type": "integer", "minimum": 0 },
+        "stale_zone_count": { "type": "integer", "minimum": 0 },
+        "coverage_ratio": { "$ref": "#/$defs/confidence" },
+        "active_source_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "lost_source_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        }
+      }
+    },
+    "zone_states": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/zone_state" }
+    },
+    "edge_states": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/edge_state" }
+    },
+    "control_point_states": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/control_point_state" }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "title": "A full frame must actually carry zone state",
+      "if": {
+        "properties": { "frame_type": { "const": "full" } },
+        "required": ["frame_type"]
+      },
+      "then": {
+        "required": ["zone_states", "coverage"],
+        "properties": {
+          "zone_states": { "minItems": 1 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "provenance": {
+      "description": "Drives the per-zone Data Integrity Badge (SPEC N-9 / FR-089). `simulated` is a first-class value, not a debug flag: the demo runs mixed real and simulated sources and the UI must label each honestly.",
+      "enum": ["live_cv", "device_derived", "fused", "simulated", "inferred", "manual", "unavailable"]
+    },
+    "zone_state": {
+      "description": "Observed state of one zone at observed_at. Field semantics are identical to venue-graph.schema.json#/$defs/zone_current_state; this is the authoritative carrier and that one is a denormalised mirror.",
+      "type": "object",
+      "required": ["zone_id", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "zone_id": { "$ref": "#/$defs/identifier" },
+        "observed_at": {
+          "description": "Per-zone observation time, when it differs from the frame's. Sources rarely tick in lockstep, and averaging across a spread of observation times without recording it is a quiet way to smear a fast-moving trend.",
+          "$ref": "#/$defs/timestamp"
+        },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "is_stale": { "type": "boolean" },
+        "density_persons_per_sqm": { "type": "number", "minimum": 0, "maximum": 20 },
+        "person_count_estimate": { "type": "number", "minimum": 0 },
+        "count_uncertainty_persons": {
+          "description": "Plus/minus band on person_count_estimate. Density regression at high occupancy under-counts in a known, direction-biased way (SPEC AI-1 failure modes), so a point estimate alone overstates what we know.",
+          "type": "number",
+          "minimum": 0
+        },
+        "mean_speed_mps": { "type": "number", "minimum": 0, "maximum": 15 },
+        "instability_index": {
+          "description": "SPEC N-1. Proxy for crowd pressure. Unbounded above; thresholds uncalibrated.",
+          "type": "number",
+          "minimum": 0
+        },
+        "velocity_dispersion": { "type": "number", "minimum": 0 },
+        "dominant_heading_degrees": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "flow_coherence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "flow_regime": {
+          "enum": ["laminar", "transitional", "stop_and_go", "turbulent", "static", "unknown"]
+        },
+        "device_sample_count": {
+          "description": "Number of consenting devices contributing to this zone's movement statistics. Load-bearing for honesty in two ways: phone-derived signals are penetration-biased so absolute counts must never be inferred from them (SPEC §12), and the Differential Immobility Anomaly needs a minimum neighbour sample before a crowd baseline is meaningful at all (FR-133).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "contributing_source_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "edge_state": {
+      "description": "Observed state of one connection. Carries MEASURED throughput only - utilisation against capacity is computed by the Bottleneck Physics Engine, which owns the topology join.",
+      "type": "object",
+      "required": ["edge_id", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "edge_id": { "$ref": "#/$defs/identifier" },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "measured_flow_per_minute": {
+          "description": "Persons per minute observed in the edge's nominal FORWARD direction (source_zone -> target_zone).",
+          "type": "number",
+          "minimum": 0
+        },
+        "measured_flow_per_minute_reverse": {
+          "description": "Persons per minute observed against the nominal direction. Non-zero alongside a non-zero forward flow is the definition of counterflow (SPEC FR-027); sustained reverse flow where forward is expected is reverse crowd movement (FR-026).",
+          "type": "number",
+          "minimum": 0
+        },
+        "counterflow_fraction": {
+          "description": "Share of total observed flow moving against the dominant direction, 0 to 1.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mean_speed_mps": { "type": "number", "minimum": 0, "maximum": 15 },
+        "flow_measurement_method": {
+          "description": "`direct` = measured at the connection. `inferred_from_occupancy` = back-computed from adjacent zone occupancy change, materially less reliable and never to be presented as equivalent. `unavailable` = unmonitored; the engine must report UNKNOWN for this edge rather than assume it is healthy (SPEC AI-4 failure modes).",
+          "enum": ["direct", "inferred_from_occupancy", "unavailable"]
+        },
+        "dynamic_state": {
+          "description": "Current Tier 2 operational position, included here when it changed within this frame so that consumers holding a hydrated view stay consistent without a separate lookup. The authoritative record remains the audited transition log.",
+          "type": "object",
+          "required": ["mode"],
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["open", "closed", "one_way_forward", "one_way_reverse", "restricted"] },
+            "capacity_derate_factor": { "type": "number", "minimum": 0, "maximum": 1 },
+            "as_of": { "$ref": "#/$defs/timestamp" },
+            "set_by": { "type": "string", "maxLength": 200 },
+            "set_via_control_point": { "$ref": "#/$defs/identifier" },
+            "reason": { "type": "string", "maxLength": 500 }
+          }
+        },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "control_point_state": {
+      "description": "Current position of an operator-toggleable control. Low-frequency: appears in a frame only on change, or in every `full` frame as a baseline.",
+      "type": "object",
+      "required": ["control_point_id", "mode"],
+      "additionalProperties": false,
+      "properties": {
+        "control_point_id": { "$ref": "#/$defs/identifier" },
+        "mode": { "enum": ["open", "closed", "restricted", "one_way_forward", "one_way_reverse", "unknown"] },
+        "as_of": { "$ref": "#/$defs/timestamp" },
+        "set_by": { "type": "string", "maxLength": 200 },
+        "confirmed_by_responder_id": {
+          "description": "Present once a field responder has physically confirmed the change (SPEC FR-123). Until then the state is an intention, not a fact, and the simulation should treat it as such.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "staff_present_count": { "type": "integer", "minimum": 0 },
+        "extensions": { "type": "object", "additionalProperties": true }
+      }
+    }
+  }
+}

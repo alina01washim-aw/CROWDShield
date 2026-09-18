@@ -1,0 +1,647 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crowdshield.example/schemas/venue-graph.schema.json",
+  "title": "CROWDShield Venue Graph",
+  "description": "Single source of truth for venue topology (CROWDShield SPEC-v1 requirement N-3). Consumed by the Risk Engine (SPEC §9), the Bottleneck Physics Engine (N-4), the Recommendation Engine (SPEC §11), and counterfactual simulation (N-5).\n\nTHREE-TIER STATE MODEL. This schema deliberately separates three kinds of state that are often conflated:\n  Tier 1 - STATIC TOPOLOGY: geometry, area, width, capacity, criticality. Immutable for the duration of an event. Versioned and content-hashed. This document.\n  Tier 2 - LOW-FREQUENCY OPERATIONAL STATE: gate open/closed, one-way settings. Operator- or responder-driven, a handful of transitions per event, event-sourced and audited (SPEC FR-007, FR-154). Carried here as `dynamic_state`, whose meaning is kind-dependent (see `document_kind`).\n  Tier 3 - HIGH-FREQUENCY TELEMETRY: density, mean speed, instability index. Multiple observations per zone per second. NEVER stored in this document. See venue-telemetry-frame.schema.json.\n\nThe `document_kind` discriminator machine-enforces the Tier 1 / Tier 3 boundary: a `topology` document that contains telemetry fails validation, and a `hydrated_snapshot` that lacks them also fails. This makes the separation a schema guarantee rather than a convention.\n\nLIMITS OF JSON SCHEMA. Cross-reference integrity cannot be expressed in JSON Schema (there are no foreign keys). The following MUST be enforced by a separate validation pass, which ships alongside this schema:\n  1. zone_id, edge_id, control_point_id are each unique within their collection.\n  2. every edge.source_zone and edge.target_zone resolves to an existing zone_id.\n  3. every control_point.governs_edges entry resolves to an existing edge_id.\n  4. zone.critical_threshold_persons >= zone.base_capacity_persons.\n  5. derived adjacency (zone.incoming_edges / outgoing_edges), where present, agrees exactly with the edge list.\n  6. at least one zone has is_egress_terminal = true, and it is reachable from every non-terminal zone over edges whose default state is traversable (otherwise the venue graph describes a trap and the egress-adequacy signal in SPEC §9 family B cannot be computed).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "document_kind",
+    "venue",
+    "topology_version",
+    "spatial_reference",
+    "zones",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Version of THIS schema that the document targets. Semantic versioning. A consumer MUST refuse a major version it does not know.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "document_kind": {
+      "description": "Discriminator enforcing the static/telemetry split.\n  `topology`  - authored, versioned source of truth. Tier 1 + Tier 2 defaults only. Telemetry fields are FORBIDDEN. `dynamic_state.mode` means 'configured default position at event start'.\n  `hydrated_snapshot` - a derived read projection produced by joining a topology document to one telemetry frame, for convenience of clients that want a single payload. NEVER authored by hand, NEVER persisted as the source of truth. Telemetry fields are REQUIRED, and `dynamic_state.mode` means 'current position'.",
+      "enum": ["topology", "hydrated_snapshot"]
+    },
+    "venue": { "$ref": "#/$defs/venue" },
+    "topology_version": { "$ref": "#/$defs/topology_version" },
+    "spatial_reference": { "$ref": "#/$defs/spatial_reference" },
+    "zones": {
+      "description": "Graph nodes. Every physically distinguishable space that is monitored, occupied, or traversed.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/zone" }
+    },
+    "edges": {
+      "description": "Graph edges. Physical connections between zones through which people flow. Directed: source_zone -> target_zone defines the nominal 'forward' direction, which is a labelling convention, not a claim that flow is one-way (see edge.traversal).",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/edge" }
+    },
+    "control_points": {
+      "description": "Operator-toggleable physical controls (gates, barricades, shutters). A control point governs one or more edges; toggling it changes those edges' traversability. This indirection matters because one physical gate frequently governs several modelled edges, and because the Recommendation Engine reasons about the control point (which staff must physically operate) rather than the edge (an abstraction).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/control_point" }
+    },
+    "telemetry_binding": { "$ref": "#/$defs/telemetry_binding" },
+    "extensions": { "$ref": "#/$defs/extensions" }
+  },
+  "allOf": [
+    {
+      "title": "Tier 1 purity: a topology document carries no telemetry",
+      "if": {
+        "properties": { "document_kind": { "const": "topology" } },
+        "required": ["document_kind"]
+      },
+      "then": {
+        "properties": {
+          "zones": {
+            "items": {
+              "properties": {
+                "current_state": false
+              }
+            }
+          },
+          "edges": {
+            "items": {
+              "properties": {
+                "dynamic_state": {
+                  "properties": {
+                    "as_of": false,
+                    "set_by": false,
+                    "set_via_control_point": false
+                  }
+                }
+              }
+            }
+          },
+          "telemetry_binding": false
+        }
+      }
+    },
+    {
+      "title": "Hydrated snapshots must be fully populated and bound to a source frame",
+      "if": {
+        "properties": { "document_kind": { "const": "hydrated_snapshot" } },
+        "required": ["document_kind"]
+      },
+      "then": {
+        "required": ["telemetry_binding"],
+        "properties": {
+          "zones": {
+            "items": { "required": ["current_state"] }
+          },
+          "edges": {
+            "items": {
+              "properties": {
+                "dynamic_state": { "required": ["as_of"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "description": "Stable, human-readable, URL-safe key. Lowercase to prevent case-collision bugs across stores. Stable across topology revisions: renaming an id is a delete plus a create, and breaks historical telemetry joins.",
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9_-]{0,62}[a-z0-9])?$"
+    },
+    "timestamp": {
+      "description": "RFC 3339 / ISO 8601 instant, UTC preferred. Every time-bearing value in CROWDShield is explicit (SPEC FR-147: never present stale data as current).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "confidence": {
+      "description": "Confidence in the accompanying value, 0 (no confidence) to 1 (full confidence). Reported SEPARATELY from magnitude, never folded into it (SPEC §9 step 7).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "provenance": {
+      "description": "Where a value came from. Drives the Data Integrity Badge (SPEC N-9, FR-089) so the UI can never silently present simulated or stale data as live.",
+      "enum": [
+        "live_cv",
+        "device_derived",
+        "fused",
+        "simulated",
+        "inferred",
+        "manual",
+        "unavailable"
+      ]
+    },
+    "calibration_status": {
+      "description": "Honesty marker required by SPEC FR-059. Any threshold shipped as an engineering estimate must say so, machine-readably, so the UI can label it.",
+      "enum": ["uncalibrated_default", "venue_estimated", "venue_measured", "expert_reviewed"]
+    },
+    "extensions": {
+      "description": "Explicit escape hatch. All entities are otherwise closed (additionalProperties: false) so that typos fail loudly instead of being silently ignored - a misspelled `critical_threshold_persons` in a safety config is exactly the failure we cannot afford. Forward-compatible additions go here until promoted to first-class fields in a minor version.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "venue": {
+      "type": "object",
+      "required": ["venue_id", "name", "timezone"],
+      "additionalProperties": false,
+      "properties": {
+        "venue_id": { "$ref": "#/$defs/identifier" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "event_id": {
+          "description": "Optional. Present when this topology revision is scoped to one specific event (capacities and gate defaults often differ between a cricket match and a religious procession at the same ground).",
+          "$ref": "#/$defs/identifier"
+        },
+        "venue_type": {
+          "enum": ["stadium", "temple_complex", "festival_ground", "transit_hub", "street_procession", "exhibition_hall", "arena", "open_ground", "other"]
+        },
+        "timezone": {
+          "description": "IANA timezone name, e.g. 'Asia/Kolkata'. Required because scheduled context events (SPEC FR-008) and per-zone time-of-day baselines (FR-034) are meaningless without it.",
+          "type": "string",
+          "minLength": 3
+        },
+        "description": { "type": "string", "maxLength": 2000 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "topology_version": {
+      "description": "Identity of this exact topology revision. Every telemetry frame and every derived risk score binds to a content_hash so that an edit to a capacity value mid-event cannot silently invalidate cached indices or make historical scores incomparable (SPEC FR-155).",
+      "type": "object",
+      "required": ["version", "authored_at", "content_hash"],
+      "additionalProperties": false,
+      "properties": {
+        "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "authored_at": { "$ref": "#/$defs/timestamp" },
+        "authored_by": {
+          "description": "Attribution for the safety envelope. Role R4 (Event Administrator) per SPEC §4.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "content_hash": {
+          "description": "Hash over the canonicalised document with this field excluded. Prefix names the algorithm.",
+          "type": "string",
+          "pattern": "^(sha256|sha512):[0-9a-f]{32,128}$"
+        },
+        "supersedes": {
+          "description": "content_hash of the revision this replaces, forming an auditable chain.",
+          "type": "string",
+          "pattern": "^(sha256|sha512):[0-9a-f]{32,128}$"
+        },
+        "change_note": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "spatial_reference": {
+      "description": "Declares the coordinate frame for all geometry in the document. Both modes require a geographic anchor, because SPEC FR-074 and FR-103 (location-based citizen warnings via geofence) cannot be satisfied by a purely local frame - a venue graph that cannot be geofenced fails a core requirement, so this is enforced at config time rather than discovered at runtime.",
+      "type": "object",
+      "required": ["mode", "linear_units", "geographic_anchor"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "`geographic`: coordinates are [longitude, latitude] in decimal degrees, GeoJSON/RFC 7946 axis order. `local_cartesian`: coordinates are [x_meters, y_meters] in a venue-local plane, converted to geographic via geographic_anchor.",
+          "enum": ["geographic", "local_cartesian"]
+        },
+        "epsg": {
+          "description": "EPSG code of the frame. 4326 for the geographic mode.",
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 32767
+        },
+        "linear_units": { "const": "meters" },
+        "geographic_anchor": {
+          "description": "For `geographic` mode, a representative point inside the venue (used for map centring and timezone sanity checks). For `local_cartesian` mode, the real-world position of local origin (0,0), which is what makes geofencing possible.",
+          "type": "object",
+          "required": ["latitude", "longitude"],
+          "additionalProperties": false,
+          "properties": {
+            "latitude": { "type": "number", "minimum": -90, "maximum": 90 },
+            "longitude": { "type": "number", "minimum": -180, "maximum": 180 },
+            "rotation_degrees": {
+              "description": "Clockwise rotation of local +Y from true north. Only meaningful for local_cartesian.",
+              "type": "number",
+              "minimum": -360,
+              "maximum": 360
+            }
+          }
+        }
+      }
+    },
+    "position": {
+      "description": "A single point. Axis order follows spatial_reference.mode.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [{ "type": "number" }, { "type": "number" }]
+    },
+    "polygon": {
+      "description": "GeoJSON Polygon subset (RFC 7946). First ring is the exterior boundary, subsequent rings are holes. Rings must be closed (first coordinate repeated last), which is a structural rule the integrity pass verifies. Used for the heat-map render surface and for point-in-polygon geofence evaluation (SPEC FR-103).",
+      "type": "object",
+      "required": ["type", "coordinates"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "Polygon" },
+        "coordinates": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 4,
+            "items": { "$ref": "#/$defs/position" }
+          }
+        }
+      }
+    },
+    "density_bands": {
+      "description": "Per-zone breakpoints converting persons/m^2 into the qualitative bands used by SPEC §9 signal family D. Per-zone rather than global because a stairway, a standing viewing area and an open concourse tolerate very different densities. Breakpoints MUST be non-decreasing (verified by the integrity pass; JSON Schema cannot compare sibling values).\n\nSHIPPED DEFAULTS ARE UNCALIBRATED. calibration_status is mandatory precisely so the UI can say so (SPEC FR-059).",
+      "type": "object",
+      "required": ["calibration_status"],
+      "additionalProperties": false,
+      "properties": {
+        "comfortable_max_persons_per_sqm": { "type": "number", "exclusiveMinimum": 0, "maximum": 20 },
+        "constrained_max_persons_per_sqm": { "type": "number", "exclusiveMinimum": 0, "maximum": 20 },
+        "dense_max_persons_per_sqm": { "type": "number", "exclusiveMinimum": 0, "maximum": 20 },
+        "critical_min_persons_per_sqm": { "type": "number", "exclusiveMinimum": 0, "maximum": 20 },
+        "calibration_status": { "$ref": "#/$defs/calibration_status" },
+        "basis_note": {
+          "description": "Free text naming the source of these breakpoints (published pedestrian level-of-service bands, venue survey, engineering estimate). Required reading before anyone quotes a threshold as authoritative.",
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "zone_risk_profile": {
+      "description": "Static structural attributes feeding SPEC §9 signal family C (Context). These do not create risk on their own; they modulate how much a given measured physical state should worry us.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "criticality_weight": {
+          "description": "Bounded multiplier applied to the composed risk score for this zone. 1.0 is neutral. Bounded (not additive) so that context can amplify real physical signal but can never manufacture risk from nothing (SPEC §9 step 4).",
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 2,
+          "default": 1
+        },
+        "enclosure": {
+          "description": "Enclosed spaces concentrate crowd pressure and restrict escape.",
+          "enum": ["open", "partially_enclosed", "fully_enclosed"]
+        },
+        "has_stairs": { "type": "boolean" },
+        "gradient_percent": { "type": "number", "minimum": -100, "maximum": 100 },
+        "surface": { "enum": ["paved", "unpaved", "grass", "sand", "wet_prone", "polished_indoor", "other"] },
+        "single_egress": {
+          "description": "True when the zone has exactly one viable exit. A strong hazard-override candidate: a single-egress zone at high density is qualitatively different from a well-connected one.",
+          "type": "boolean"
+        },
+        "historical_incident_count": { "type": "integer", "minimum": 0 },
+        "known_choke_point": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 1000 }
+      }
+    },
+    "zone_current_state": {
+      "description": "TIER 3 TELEMETRY - denormalised read projection only. FORBIDDEN in a `topology` document, REQUIRED in a `hydrated_snapshot`. The authoritative carrier of these values is venue-telemetry-frame.schema.json; this mirror exists solely so a client can consume one payload instead of performing the join itself.\n\nContains MEASUREMENTS ONLY. Derived quantities that require the topology join (occupancy_ratio, edge utilisation) and downstream analytical outputs (risk score, severity, Time-To-Critical, bottleneck classification) are deliberately absent - they belong to the Risk Engine and Bottleneck Physics Engine outputs, not to the venue model. Keeping that line sharp is what stops this schema becoming a god-object.",
+      "type": "object",
+      "required": ["observed_at", "provenance", "density_persons_per_sqm", "mean_speed_mps", "instability_index"],
+      "additionalProperties": false,
+      "properties": {
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "is_stale": {
+          "description": "Set when observed_at is older than the configured staleness threshold. A stale zone is EXCLUDED from live risk scoring rather than averaged in (SPEC FR-006).",
+          "type": "boolean"
+        },
+        "density_persons_per_sqm": {
+          "description": "SPEC FR-020. Estimated, not counted - carries the uncertainty of AI-1.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "person_count_estimate": { "type": "number", "minimum": 0 },
+        "mean_speed_mps": {
+          "description": "SPEC FR-021. Mean crowd movement speed in metres per second, from dense optical flow (AI-2).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "instability_index": {
+          "description": "SPEC FR-030 / N-1. Crowd Instability Index: a proxy for the crowd-pressure quantity (local density combined with velocity dispersion) associated in crowd-disaster literature with the onset of crowd turbulence. Unbounded above and DIMENSIONALLY A PROXY, not a validated physical measurement. Thresholds are uncalibrated. This is the single most important predictive signal in CROWDShield and also the one most vulnerable to overclaiming.",
+          "type": "number",
+          "minimum": 0
+        },
+        "velocity_dispersion": {
+          "description": "Variance/spread of individual velocity vectors. The 'variance' half of the instability index, retained separately because it is independently interpretable: high dispersion at low mean speed is the turbulence signature.",
+          "type": "number",
+          "minimum": 0
+        },
+        "dominant_heading_degrees": {
+          "description": "SPEC FR-022. Compass bearing of dominant flow, 0 = north, clockwise.",
+          "type": "number",
+          "minimum": 0,
+          "exclusiveMaximum": 360
+        },
+        "flow_coherence": {
+          "description": "SPEC FR-023. 1 = all movement aligned, 0 = fully dispersed headings. Low coherence at high density indicates counterflow or milling.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "flow_regime": {
+          "description": "SPEC AI-3 named regime. The laminar -> stop_and_go -> turbulent progression is the transition CROWDShield exists to catch. `unknown` is a legitimate and required value (SPEC FR-031).",
+          "enum": ["laminar", "transitional", "stop_and_go", "turbulent", "static", "unknown"]
+        },
+        "contributing_source_ids": {
+          "description": "Which registered sources produced this estimate. Required for explainability (SPEC FR-046) and for degraded-mode confidence maths (FR-145).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "zone": {
+      "description": "A graph node: one physically distinguishable, monitored space.",
+      "type": "object",
+      "required": ["zone_id", "type", "area_sqm", "base_capacity_persons", "critical_threshold_persons"],
+      "additionalProperties": false,
+      "properties": {
+        "zone_id": { "$ref": "#/$defs/identifier" },
+        "name": {
+          "description": "Human-facing label. Must be what control-room staff and signage actually call the place, not an internal code - operators under stress cannot translate ids (SPEC §7 Usability).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "type": {
+          "description": "Governs default flow behaviour and which hazard overrides apply. Distinguished at this granularity because stairways, queues and open gathering areas have materially different capacity and failure characteristics - collapsing them into one 'zone' type would make the physics engine wrong in predictable ways.",
+          "enum": [
+            "entrance",
+            "exit",
+            "entrance_exit",
+            "corridor",
+            "junction",
+            "stairway",
+            "ramp",
+            "gathering",
+            "viewing_area",
+            "queue",
+            "concourse",
+            "holding_area",
+            "transit_interface",
+            "service",
+            "external_safe_area"
+          ]
+        },
+        "area_sqm": {
+          "description": "Usable floor area available to people, EXCLUDING permanent obstructions (stage, pillars, planted beds, fixed seating where standing is impossible). Density is count/area, so an over-stated area silently under-states density and suppresses alerts - this is the most safety-critical single number in the document.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "base_capacity_persons": {
+          "description": "Safe working occupancy under normal operation. Used for occupancy_ratio and as the reference for SPEC §9 family D.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "critical_threshold_persons": {
+          "description": "Occupancy at which crush-band conditions are expected for this zone. This is the target that Time-To-Critical (SPEC N-2 / FR-041) counts down to, which makes it the number most visible to operators and therefore the one most needing an honest calibration_status on its density_bands. MUST be >= base_capacity_persons (verified by the integrity pass).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "is_egress_terminal": {
+          "description": "True when reaching this zone constitutes reaching safety (street, open ground outside the venue). Terminal nodes are the sinks for the egress-adequacy computation in SPEC §9 family B and the destinations for safest-route search (FR-067). A graph with no terminal describes a trap and fails the integrity pass.",
+          "type": "boolean",
+          "default": false
+        },
+        "monitored": {
+          "description": "False for zones present for topological completeness but carrying no sensing. An unmonitored zone must be reported as UNKNOWN, never as safe (SPEC AI-4 failure modes).",
+          "type": "boolean",
+          "default": true
+        },
+        "geometry": { "$ref": "#/$defs/polygon" },
+        "centroid": {
+          "description": "Stored rather than derived so that distance ranking, responder-proximity search and map labelling avoid recomputing polygon centroids on every evaluation tick.",
+          "$ref": "#/$defs/position"
+        },
+        "level": {
+          "description": "Floor/storey index. 0 = ground. Distinguishes vertically stacked zones that overlap in plan view.",
+          "type": "integer"
+        },
+        "density_bands": { "$ref": "#/$defs/density_bands" },
+        "risk_profile": { "$ref": "#/$defs/zone_risk_profile" },
+        "terminal_discharge_capacity_per_minute": {
+          "description": "Persons per minute this terminal can absorb into safety. Only meaningful for egress terminals; an exit that discharges onto a narrow street is not an infinite sink, and modelling it as one is a classic egress-planning error.",
+          "type": "number",
+          "minimum": 0
+        },
+        "incoming_edges": {
+          "description": "DERIVED ADJACENCY INDEX - edge_ids where target_zone == this zone_id. Generated by the graph compiler, never hand-authored, and verified against the edge list by the integrity pass. Present so that consumers which do not build their own index (map renderers, the mobile client) get O(1) adjacency, and so that flow-conservation iteration is a direct read rather than a scan. Carries a real denormalisation hazard, which is why it is optional, marked readOnly, and machine-checked.",
+          "type": "array",
+          "readOnly": true,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "outgoing_edges": {
+          "description": "DERIVED ADJACENCY INDEX - edge_ids where source_zone == this zone_id. See incoming_edges.",
+          "type": "array",
+          "readOnly": true,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "current_state": { "$ref": "#/$defs/zone_current_state" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "edge_dynamic_state": {
+      "description": "TIER 2 OPERATIONAL STATE. In a `topology` document this declares the CONFIGURED DEFAULT position at event start, and the runtime fields (as_of, set_by, set_via_control_point) are forbidden. In a `hydrated_snapshot` it reports the CURRENT position and as_of is required. Transitions are event-sourced and audited (SPEC FR-007, FR-154); this object is a projection of the latest transition, not the log itself.",
+      "type": "object",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "`open` - traversable per the edge's `traversal` affordance.\n`closed` - not traversable in either direction.\n`one_way_forward` - traversable source -> target only.\n`one_way_reverse` - traversable target -> source only.\n`restricted` - traversable at reduced capacity (partial barricade, staff-metered). Pair with capacity_derate_factor.",
+          "enum": ["open", "closed", "one_way_forward", "one_way_reverse", "restricted"]
+        },
+        "capacity_derate_factor": {
+          "description": "Multiplier applied to flow capacity while in this mode. 1.0 = full capacity. Meaningful chiefly for `restricted`.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "as_of": { "$ref": "#/$defs/timestamp" },
+        "set_by": {
+          "description": "Actor who asserted this state: an operator id, a responder id, or `config_default`.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "set_via_control_point": { "$ref": "#/$defs/identifier" },
+        "reason": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "edge": {
+      "description": "A graph edge: a physical connection through which people flow between two zones.",
+      "type": "object",
+      "required": ["edge_id", "source_zone", "target_zone", "width_meters", "flow_capacity_per_minute", "dynamic_state"],
+      "additionalProperties": false,
+      "properties": {
+        "edge_id": { "$ref": "#/$defs/identifier" },
+        "name": { "type": "string", "maxLength": 200 },
+        "source_zone": {
+          "description": "zone_id of the origin of the NOMINAL forward direction. Direction here is a labelling convention for interpreting flow measurements and one-way modes; it is not itself a claim that the connection is one-way. See `traversal`.",
+          "$ref": "#/$defs/identifier"
+        },
+        "target_zone": { "$ref": "#/$defs/identifier" },
+        "type": {
+          "enum": ["corridor", "doorway", "gateway", "stairway", "ramp", "open_boundary", "bridge", "tunnel", "turnstile_bank", "virtual"]
+        },
+        "width_meters": {
+          "description": "Nominal clear width. Retained even though flow_capacity_per_minute is given explicitly, so that capacity can be independently re-derived and audited rather than taken on trust.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "min_width_meters": {
+          "description": "Narrowest clear width along the connection. THIS, not the nominal width, is what physically governs throughput - a 6 m corridor with a 1.8 m doorway behaves like a 1.8 m corridor. Where present, the Bottleneck Physics Engine should prefer it.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "length_meters": {
+          "description": "Traversal length. Needed for risk-weighted route cost (SPEC FR-067) and for free-flow travel-time estimates that bound how fast an intervention can take effect.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "flow_capacity_per_minute": {
+          "description": "Persons per minute sustainable in the FORWARD direction under free flow. The denominator of edge utilisation and therefore the pivot of the entire Bottleneck Physics Engine (SPEC N-4 / FR-025). AI-4's stated failure mode is that a wrong capacity produces confidently wrong conclusions, which is why flow_capacity_basis is required alongside it.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "flow_capacity_per_minute_reverse": {
+          "description": "Reverse-direction capacity where asymmetric (turnstiles, downhill vs uphill stairs). Defaults to flow_capacity_per_minute when absent.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "flow_capacity_basis": {
+          "description": "How the capacity number was obtained. Mandatory: it is the difference between a measured constraint and a guess, and the operator is entitled to know which one is driving an alert.",
+          "type": "object",
+          "required": ["method"],
+          "additionalProperties": false,
+          "properties": {
+            "method": { "enum": ["measured_throughput", "derived_from_width", "standard_reference", "engineering_estimate"] },
+            "reference": { "type": "string", "maxLength": 300 },
+            "calibration_status": { "$ref": "#/$defs/calibration_status" },
+            "measured_at": { "$ref": "#/$defs/timestamp" }
+          }
+        },
+        "traversal": {
+          "description": "The DESIGNED physical affordance, distinct from the current operator-set mode. A corridor may be physically bidirectional (`bidirectional`) yet currently set one-way by an operator (dynamic_state.mode = one_way_forward). Conflating the two loses the information needed to know what an operator is permitted to change back to.",
+          "enum": ["bidirectional", "forward_only", "reverse_only"],
+          "default": "bidirectional"
+        },
+        "counterflow_permitted": {
+          "description": "False where simultaneous opposing flow is physically dangerous rather than merely inefficient (narrow stairs). Feeds the safety invariant in SPEC FR-064 that forbids recommendations creating new counterflow.",
+          "type": "boolean",
+          "default": true
+        },
+        "gradient_percent": { "type": "number", "minimum": -100, "maximum": 100 },
+        "step_count": {
+          "description": "Number of steps for stairway edges. Relevant because falls on stairs are a recognised crush-initiation mechanism.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "controlled_by": {
+          "description": "DERIVED INVERSE INDEX of control_point.governs_edges. Generated by the graph compiler; the authoritative direction is governs_edges on the control point.",
+          "type": "array",
+          "readOnly": true,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "is_monitored_flow": {
+          "description": "True when a sensing source measures throughput on this edge. False means flow must be INFERRED from adjacent zone occupancy change, at lower confidence - and an unmonitored edge must be reported as unknown, never as healthy.",
+          "type": "boolean",
+          "default": false
+        },
+        "dynamic_state": { "$ref": "#/$defs/edge_dynamic_state" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "control_point": {
+      "description": "A physical control an operator can direct someone to change: gate, barricade, shutter, cordon. Modelled separately from edges because the Recommendation Engine must reason about the real-world act (who walks there, how long it takes, whether it can be undone) rather than the graph abstraction.",
+      "type": "object",
+      "required": ["control_point_id", "type", "name", "governs_edges", "default_mode", "actuation"],
+      "additionalProperties": false,
+      "properties": {
+        "control_point_id": { "$ref": "#/$defs/identifier" },
+        "type": { "enum": ["gate", "barricade", "movable_barrier", "turnstile", "door", "shutter", "cordon", "signage_only"] },
+        "name": {
+          "description": "The label used on site and on signage. An operator instruction naming anything else is not actionable.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "governs_edges": {
+          "description": "Edges whose traversability this control point changes. Authoritative direction of the control-point/edge relationship. Many-to-many by design: one gate frequently governs several modelled edges, and one edge may be gated at both ends.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "default_mode": {
+          "description": "Configured position at event start.",
+          "enum": ["open", "closed", "restricted"]
+        },
+        "supported_modes": {
+          "description": "Modes this control point can physically achieve. The Recommendation Engine must not propose a state the hardware cannot reach (SPEC FR-063 feasibility filtering).",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "enum": ["open", "closed", "restricted", "one_way_forward", "one_way_reverse"] }
+        },
+        "actuation": {
+          "description": "How the state is changed. `fixed` means it cannot be changed during an event and must never appear in a recommendation.",
+          "enum": ["remote", "manual_staffed", "manual_unstaffed", "fixed"]
+        },
+        "actuation_lead_time_seconds": {
+          "description": "Realistic time from operator decision to the change being physically effective, including a responder walking there. Directly consumed by the lead-time feasibility gate in SPEC FR-065: recommending a six-minute action when Time-To-Critical is three minutes is worse than useless, and this field is what lets the engine know.",
+          "type": "number",
+          "minimum": 0
+        },
+        "staff_required_count": {
+          "description": "Personnel needed to actuate and hold the change. Feeds resource feasibility (SPEC FR-063) and the personnel-redistribution recommendation (FR-068).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "reversible": {
+          "description": "False where the change is effectively one-way during an event (a barricade line that cannot be re-formed once a crowd is through). Irreversible actions warrant a higher approval bar.",
+          "type": "boolean",
+          "default": true
+        },
+        "authority_required": {
+          "description": "Approval level needed. Supports SPEC FR-077 (no automatic execution) and routes high-consequence actions to the right human.",
+          "enum": ["operator", "incident_commander", "police", "venue_owner"]
+        },
+        "location": { "$ref": "#/$defs/position" },
+        "level": { "type": "integer" },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "telemetry_binding": {
+      "description": "Present ONLY in a hydrated_snapshot. Records exactly which telemetry frame was joined to produce the projection, so a snapshot is reproducible and its staleness is self-evident. Forbidden in a topology document.",
+      "type": "object",
+      "required": ["frame_id", "observed_at"],
+      "additionalProperties": false,
+      "properties": {
+        "frame_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "observed_at": { "$ref": "#/$defs/timestamp" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "system_mode": {
+          "description": "Operating mode at the time of the frame, so a consumer can render the degraded-mode banner (SPEC FR-144) without a second lookup.",
+          "enum": ["nominal", "degraded", "local_only"]
+        },
+        "coverage_ratio": {
+          "description": "Fraction of monitored zones with fresh telemetry in this frame. The headline input to system-wide confidence (SPEC FR-145).",
+          "$ref": "#/$defs/confidence"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,150 @@
+{
+  "schema_version": "1.0.0",
+  "frame_id": "mini-ground-demo:2026-08-19T09:14:00Z:00000412",
+  "venue_id": "mini-ground-demo",
+  "event_id": "demo-event-001",
+  "topology_binding": {
+    "topology_version": "1.0.0",
+    "content_hash": "sha256:fa304186dd1d312378ad19793982bfe04fa1c2ffd75a3a80eddedcdb10286ba3"
+  },
+  "observed_at": "2026-08-19T09:14:00Z",
+  "emitted_at": "2026-08-19T09:14:00.640Z",
+  "sequence": 412,
+  "frame_type": "full",
+  "evaluation_interval_ms": 2000,
+  "system_mode": "nominal",
+  "coverage": {
+    "monitored_zone_count": 3,
+    "reporting_zone_count": 3,
+    "stale_zone_count": 0,
+    "coverage_ratio": 1,
+    "active_source_ids": [
+      "cam-gate-north-01",
+      "cam-ground-01",
+      "sim-exit-east",
+      "devices-aggregate"
+    ],
+    "lost_source_ids": []
+  },
+  "zone_states": [
+    {
+      "zone_id": "gate-north",
+      "observed_at": "2026-08-19T09:13:59Z",
+      "provenance": "live_cv",
+      "confidence": 0.78,
+      "is_stale": false,
+      "density_persons_per_sqm": 1.85,
+      "person_count_estimate": 555,
+      "count_uncertainty_persons": 62,
+      "mean_speed_mps": 0.85,
+      "instability_index": 0.2,
+      "velocity_dispersion": 0.11,
+      "dominant_heading_degrees": 180,
+      "flow_coherence": 0.91,
+      "flow_regime": "laminar",
+      "device_sample_count": 41,
+      "contributing_source_ids": [
+        "cam-gate-north-01",
+        "devices-aggregate"
+      ]
+    },
+    {
+      "zone_id": "main-ground",
+      "observed_at": "2026-08-19T09:14:00Z",
+      "provenance": "fused",
+      "confidence": 0.71,
+      "is_stale": false,
+      "density_persons_per_sqm": 3.4,
+      "person_count_estimate": 4080,
+      "count_uncertainty_persons": 510,
+      "mean_speed_mps": 0.32,
+      "instability_index": 0.82,
+      "velocity_dispersion": 0.24,
+      "dominant_heading_degrees": 95,
+      "flow_coherence": 0.54,
+      "flow_regime": "transitional",
+      "device_sample_count": 214,
+      "contributing_source_ids": [
+        "cam-ground-01",
+        "devices-aggregate"
+      ]
+    },
+    {
+      "zone_id": "exit-corridor-east",
+      "observed_at": "2026-08-19T09:14:00Z",
+      "provenance": "simulated",
+      "confidence": 0.5,
+      "is_stale": false,
+      "density_persons_per_sqm": 2.6,
+      "person_count_estimate": 520,
+      "mean_speed_mps": 0.48,
+      "instability_index": 0.39,
+      "velocity_dispersion": 0.15,
+      "dominant_heading_degrees": 90,
+      "flow_coherence": 0.88,
+      "flow_regime": "laminar",
+      "device_sample_count": 0,
+      "contributing_source_ids": [
+        "sim-exit-east"
+      ]
+    }
+  ],
+  "edge_states": [
+    {
+      "edge_id": "e-gate-to-ground",
+      "observed_at": "2026-08-19T09:14:00Z",
+      "provenance": "live_cv",
+      "confidence": 0.74,
+      "measured_flow_per_minute": 240,
+      "measured_flow_per_minute_reverse": 2,
+      "counterflow_fraction": 0.008,
+      "mean_speed_mps": 0.85,
+      "flow_measurement_method": "direct",
+      "dynamic_state": {
+        "mode": "open",
+        "capacity_derate_factor": 1,
+        "as_of": "2026-08-19T08:30:00Z",
+        "set_by": "config_default"
+      }
+    },
+    {
+      "edge_id": "e-ground-to-exit",
+      "observed_at": "2026-08-19T09:14:00Z",
+      "provenance": "live_cv",
+      "confidence": 0.69,
+      "measured_flow_per_minute": 95,
+      "measured_flow_per_minute_reverse": 0,
+      "counterflow_fraction": 0,
+      "mean_speed_mps": 0.42,
+      "flow_measurement_method": "direct",
+      "dynamic_state": {
+        "mode": "restricted",
+        "capacity_derate_factor": 0.6,
+        "as_of": "2026-08-19T08:30:00Z",
+        "set_by": "config_default",
+        "set_via_control_point": "cp-barricade-exit-east",
+        "reason": "Barricade metering outflow onto the public street."
+      }
+    }
+  ],
+  "control_point_states": [
+    {
+      "control_point_id": "cp-gate-north",
+      "mode": "open",
+      "as_of": "2026-08-19T08:30:00Z",
+      "set_by": "config_default",
+      "staff_present_count": 4
+    },
+    {
+      "control_point_id": "cp-barricade-exit-east",
+      "mode": "restricted",
+      "as_of": "2026-08-19T08:30:00Z",
+      "set_by": "config_default",
+      "confirmed_by_responder_id": "resp-014",
+      "staff_present_count": 2
+    }
+  ],
+  "extensions": {
+    "sample_note": "Illustrative frame paired with mini-venue.topology.json. It encodes a developing bottleneck: 240 persons/min entering main-ground against 95 persons/min leaving, a net accumulation of +145/min. main-ground holds ~4080 of a 5400 critical threshold, so the shortfall of ~1320 persons closes in roughly 9 minutes under an unchanged trend. Instability values follow density x velocity_dispersion purely for internal consistency of the sample; the actual formula is an open decision (SPEC-v1 §19) and these thresholds are uncalibrated."
+  }
+}
